@@ -1,36 +1,44 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# Vyooo Admin Dashboard
 
-## Getting Started
+Production-grade admin panel for Vyooo platform control.
 
-First, run the development server:
+## Included in this implementation
+
+- Firebase Auth login with secure server session cookie
+- RBAC with Firebase custom claims (`admin`, `moderator`, `support`)
+- Protected API layer (permission checks server-side)
+- Audit logging for privileged actions (`admin_audit_logs`)
+- Core modules:
+  - Analytics overview
+  - User management
+  - CMS and content moderation
+  - System monitoring
+  - Audit log viewer
+
+## Run
 
 ```bash
+npm install
+cp .env.example .env.local
 npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+## Firebase data contracts
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+- Firestore collections:
+  - `users`
+  - `content`
+  - `admin_metrics` (doc id: `overview`)
+  - `admin_audit_logs`
+- Realtime Database path:
+  - `systemHealth`
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+## Custom claims
 
-## Learn More
+Set one claim per admin user:
 
-To learn more about Next.js, take a look at the following resources:
+```json
+{ "role": "admin" }
+```
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
-
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
-
-## Deploy on Vercel
-
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
-
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+(also supported: `moderator`, `support`)
