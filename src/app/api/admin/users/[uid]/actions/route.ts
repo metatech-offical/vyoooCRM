@@ -3,19 +3,26 @@ import { requireAdmin } from "@/lib/auth";
 import { adminAuth, adminDb } from "@/lib/firebase/admin";
 import { apiError } from "@/lib/http";
 import { logAdminAction } from "@/lib/audit";
+import { cascadeDeleteUserData } from "@/lib/user-deletion";
 
 export async function POST(request: Request, { params }: { params: Promise<{ uid: string }> }) {
   try {
     const actor = await requireAdmin("users.moderate");
     const { uid } = await params;
     const { action, reasonCode, notes, createCase } = (await request.json()) as {
-      action: "ban" | "suspend" | "restrict" | "force_logout" | "verify_creator" | "verify_user";
+      action: "ban" | "suspend" | "restrict" | "force_logout" | "verify_creator" | "verify_user" | "delete_user";
       reasonCode?: string;
       notes?: string;
       createCase?: boolean;
+      dryRun?: boolean;
     };
 
     if (!action) return NextResponse.json({ error: "Action required" }, { status: 400 });
+    if (action === "delete_user" && actor.role !== "admin") {
+      return NextResponse.json({ error: "Only admins can delete users" }, { status: 403 });
+    }
+
+    let deletionSummary: Awaited<ReturnType<typeof cascadeDeleteUserData>> | null = null;
     if (action === "ban") {
       await adminAuth.updateUser(uid, { disabled: true });
       await adminDb.collection("users").doc(uid).set({ status: "banned" }, { merge: true });
@@ -35,6 +42,9 @@ export async function POST(request: Request, { params }: { params: Promise<{ uid
         { merge: true }
       );
     }
+    if (action === "delete_user") {
+      deletionSummary = await cascadeDeleteUserData({ uid, dryRun: false });
+    }
 
     await logAdminAction({
       actorUid: actor.uid,
@@ -42,7 +52,7 @@ export async function POST(request: Request, { params }: { params: Promise<{ uid
       action: `users.${action}`,
       targetType: "user",
       targetId: uid,
-      payload: { reasonCode, notes },
+      payload: { reasonCode, notes, deletionSummary },
     });
 
     let caseId: string | null = null;
@@ -62,7 +72,7 @@ export async function POST(request: Request, { params }: { params: Promise<{ uid
       caseId = caseRef.id;
     }
 
-    return NextResponse.json({ ok: true, caseId });
+    return NextResponse.json({ ok: true, caseId, deletionSummary });
   } catch (error) {
     return apiError(error);
   }

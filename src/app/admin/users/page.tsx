@@ -36,7 +36,7 @@ type UsersResponse = {
   pageInfo?: { nextCursor?: string | null; hasMore?: boolean };
 };
 
-const ACTIONS = ["ban", "suspend", "restrict", "force_logout", "verify_creator", "verify_user"] as const;
+const ACTIONS = ["ban", "suspend", "restrict", "force_logout", "verify_creator", "verify_user", "delete_user"] as const;
 type UserAction = (typeof ACTIONS)[number];
 
 const ACTION_LABELS: Record<UserAction, string> = {
@@ -46,7 +46,27 @@ const ACTION_LABELS: Record<UserAction, string> = {
   force_logout: "Force Logout",
   verify_creator: "Verify Creator",
   verify_user: "Verify User (Manual)",
+  delete_user: "Delete User + Related Data",
 };
+
+function pickNumber(details: Record<string, unknown> | undefined, keys: string[]): number | null {
+  if (!details) return null;
+  for (const key of keys) {
+    const value = details[key];
+    if (typeof value === "number" && Number.isFinite(value)) return value;
+    if (typeof value === "string" && value.trim() !== "" && !Number.isNaN(Number(value))) return Number(value);
+  }
+  return null;
+}
+
+function pickText(details: Record<string, unknown> | undefined, keys: string[]): string | null {
+  if (!details) return null;
+  for (const key of keys) {
+    const value = details[key];
+    if (typeof value === "string" && value.trim() !== "") return value;
+  }
+  return null;
+}
 
 export default function UsersPage() {
   const [users, setUsers] = useState<ManagedUser[]>([]);
@@ -64,6 +84,7 @@ export default function UsersPage() {
   const [createCase, setCreateCase] = useState(true);
   const [actionPending, setActionPending] = useState(false);
   const [confirmOpen, setConfirmOpen] = useState(false);
+  const [confirmText, setConfirmText] = useState("");
 
   async function loadUsers(cursor?: string, append = false) {
     setLoading(true);
@@ -106,6 +127,27 @@ export default function UsersPage() {
     [users]
   );
 
+  const selectedAnalytics = useMemo(() => {
+    if (!selectedUser) return null;
+
+    const details = selectedUser.details;
+    return {
+      followers: pickNumber(details, ["followersCount", "followers", "followerCount"]),
+      following: pickNumber(details, ["followingCount", "following"]),
+      posts: pickNumber(details, ["postsCount", "postCount", "reelsCount", "videosCount"]),
+      likesReceived: pickNumber(details, ["likesCount", "likesReceived", "totalLikes"]),
+      likesGiven: pickNumber(details, ["likesGiven", "givenLikesCount", "userLikesCount"]),
+      comments: pickNumber(details, ["commentsCount", "commentCount"]),
+      reports: pickNumber(details, ["reportsCount", "reportCount"]),
+      warnings: pickNumber(details, ["warningsCount", "warningCount", "strikeCount"]),
+      createdAt: pickText(details, ["createdAt", "created_at", "signupAt", "joinedAt"]),
+      lastActiveAt: pickText(details, ["lastActiveAt", "last_seen_at", "updatedAt", "lastLoginAt"]),
+      country: pickText(details, ["country", "countryCode"]),
+      verificationMethod: pickText(details, ["verificationSource", "kycProvider", "verificationMethod"]),
+      accountType: pickText(details, ["accountType", "userType", "role"]),
+    };
+  }, [selectedUser]);
+
   function userStatusVariant(status: string): "outline" | "secondary" | "destructive" {
     if (status === "banned") return "destructive";
     if (status === "suspended") return "secondary";
@@ -129,15 +171,29 @@ export default function UsersPage() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ action, reasonCode, notes, createCase }),
       });
-      const data = (await res.json()) as { ok?: boolean; caseId?: string; error?: string };
+      const data = (await res.json()) as {
+        ok?: boolean;
+        caseId?: string;
+        error?: string;
+        deletionSummary?: { totalDocsDeleted?: number; collectionCounts?: Record<string, number>; authUserDeleted?: boolean };
+      };
       if (!res.ok || !data.ok) {
         throw new Error(data.error ?? `Action failed (${res.status})`);
       }
       if (data.caseId) {
         setHistory((h) => [`Case created: ${data.caseId}`, ...h]);
       }
+      if (action === "delete_user" && data.deletionSummary) {
+        const deletedDocs = data.deletionSummary.totalDocsDeleted ?? 0;
+        const deletedAuth = data.deletionSummary.authUserDeleted ? "yes" : "no";
+        const collectionInfo = Object.entries(data.deletionSummary.collectionCounts ?? {})
+          .map(([name, count]) => `${name}:${count}`)
+          .join(", ");
+        setHistory((h) => [`Delete summary docs=${deletedDocs}, authDeleted=${deletedAuth}${collectionInfo ? ` (${collectionInfo})` : ""}`, ...h]);
+      }
       setHistory((h) => [`Action applied: ${action} on ${selectedUser.uid}`, ...h]);
       setNotes("");
+      setConfirmText("");
       await loadUsers();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to apply action");
@@ -357,20 +413,92 @@ export default function UsersPage() {
         </Card>
       ) : null}
       <AlertDialog open={confirmOpen} onOpenChange={setConfirmOpen}>
-        <AlertDialogContent>
+        <AlertDialogContent className="max-w-2xl">
           <AlertDialogHeader>
-            <AlertDialogTitle>Confirm moderation action</AlertDialogTitle>
-            <AlertDialogDescription>
-              This will apply <strong>{ACTION_LABELS[action]}</strong> for{" "}
-              <strong>{selectedUser?.username ?? selectedUser?.email ?? selectedUser?.uid ?? "selected user"}</strong>.
-              This action will be logged in audit and may affect user access.
+            <AlertDialogTitle className="text-xl">Confirm moderation action</AlertDialogTitle>
+            <AlertDialogDescription className="text-sm leading-relaxed">
+              {action === "delete_user" ? (
+                <>
+                  This will permanently delete <strong>{selectedUser?.username ?? selectedUser?.email ?? selectedUser?.uid ?? "selected user"}</strong>,
+                  their auth account, and related records from this admin app. This cannot be undone.
+                </>
+              ) : (
+                <>
+                  This will apply <strong>{ACTION_LABELS[action]}</strong> for{" "}
+                  <strong>{selectedUser?.username ?? selectedUser?.email ?? selectedUser?.uid ?? "selected user"}</strong>.
+                  This action will be logged in audit and may affect user access.
+                </>
+              )}
             </AlertDialogDescription>
           </AlertDialogHeader>
+          {selectedUser && selectedAnalytics ? (
+            <div className="max-h-[52vh] space-y-3 overflow-auto rounded-lg border bg-muted/20 p-4">
+              <p className="text-sm font-semibold text-foreground">User history and analytics snapshot</p>
+              <div className="grid gap-2 sm:grid-cols-2">
+                <div className="rounded-md bg-background/80 p-2">
+                  <p className="text-xs text-muted-foreground">UID</p>
+                  <p className="mt-1 break-all font-mono text-xs text-foreground">{selectedUser.uid}</p>
+                </div>
+                <div className="rounded-md bg-background/80 p-2">
+                  <p className="text-xs text-muted-foreground">Email</p>
+                  <p className="mt-1 break-all text-sm text-foreground">{selectedUser.email ?? "N/A"}</p>
+                </div>
+                <div className="rounded-md bg-background/80 p-2">
+                  <p className="text-xs text-muted-foreground">Current status</p>
+                  <p className="mt-1 text-sm font-medium text-foreground">{selectedUser.status}</p>
+                </div>
+                <div className="rounded-md bg-background/80 p-2">
+                  <p className="text-xs text-muted-foreground">Verification</p>
+                  <p className="mt-1 text-sm font-medium text-foreground">{selectedUser.verificationStatus ?? "none"}</p>
+                </div>
+                <div className="rounded-md bg-background/80 p-2">
+                  <p className="text-xs text-muted-foreground">Risk score</p>
+                  <p className="mt-1 text-sm font-medium text-foreground">{selectedUser.riskScore ?? 0} / 100</p>
+                </div>
+                <div className="rounded-md bg-background/80 p-2">
+                  <p className="text-xs text-muted-foreground">Reports</p>
+                  <p className="mt-1 text-sm font-medium text-foreground">{selectedAnalytics.reports ?? selectedUser.reportsCount}</p>
+                </div>
+                <div className="rounded-md bg-background/80 p-2"><p className="text-xs text-muted-foreground">Followers</p><p className="mt-1 text-sm text-foreground">{selectedAnalytics.followers ?? "N/A"}</p></div>
+                <div className="rounded-md bg-background/80 p-2"><p className="text-xs text-muted-foreground">Following</p><p className="mt-1 text-sm text-foreground">{selectedAnalytics.following ?? "N/A"}</p></div>
+                <div className="rounded-md bg-background/80 p-2"><p className="text-xs text-muted-foreground">Posts/Reels</p><p className="mt-1 text-sm text-foreground">{selectedAnalytics.posts ?? "N/A"}</p></div>
+                <div className="rounded-md bg-background/80 p-2"><p className="text-xs text-muted-foreground">Comments</p><p className="mt-1 text-sm text-foreground">{selectedAnalytics.comments ?? "N/A"}</p></div>
+                <div className="rounded-md bg-background/80 p-2"><p className="text-xs text-muted-foreground">Likes received</p><p className="mt-1 text-sm text-foreground">{selectedAnalytics.likesReceived ?? "N/A"}</p></div>
+                <div className="rounded-md bg-background/80 p-2"><p className="text-xs text-muted-foreground">Likes given</p><p className="mt-1 text-sm text-foreground">{selectedAnalytics.likesGiven ?? "N/A"}</p></div>
+                <div className="rounded-md bg-background/80 p-2"><p className="text-xs text-muted-foreground">Warnings/strikes</p><p className="mt-1 text-sm text-foreground">{selectedAnalytics.warnings ?? "N/A"}</p></div>
+                <div className="rounded-md bg-background/80 p-2"><p className="text-xs text-muted-foreground">Account type</p><p className="mt-1 text-sm text-foreground">{selectedAnalytics.accountType ?? "N/A"}</p></div>
+                <div className="rounded-md bg-background/80 p-2"><p className="text-xs text-muted-foreground">Country</p><p className="mt-1 text-sm text-foreground">{selectedAnalytics.country ?? "N/A"}</p></div>
+                <div className="rounded-md bg-background/80 p-2"><p className="text-xs text-muted-foreground">Verification method</p><p className="mt-1 text-sm text-foreground">{selectedAnalytics.verificationMethod ?? "N/A"}</p></div>
+                <div className="rounded-md bg-background/80 p-2">
+                  <p className="text-xs text-muted-foreground">Created at</p>
+                  <p className="mt-1 break-words text-sm text-foreground">{selectedAnalytics.createdAt ?? "N/A"}</p>
+                </div>
+                <div className="rounded-md bg-background/80 p-2">
+                  <p className="text-xs text-muted-foreground">Last active</p>
+                  <p className="mt-1 break-words text-sm text-foreground">{selectedAnalytics.lastActiveAt ?? "N/A"}</p>
+                </div>
+              </div>
+            </div>
+          ) : null}
+          {action === "delete_user" ? (
+            <label className="space-y-1 text-sm">
+              <span className="font-medium">Type DELETE to confirm</span>
+              <Input value={confirmText} onChange={(e) => setConfirmText(e.target.value)} placeholder="DELETE" />
+            </label>
+          ) : null}
           <AlertDialogFooter>
-            <AlertDialogCancel disabled={actionPending}>Cancel</AlertDialogCancel>
+            <AlertDialogCancel
+              disabled={actionPending}
+              onClick={() => {
+                setConfirmOpen(false);
+                setConfirmText("");
+              }}
+            >
+              Cancel
+            </AlertDialogCancel>
             <AlertDialogAction
               variant="destructive"
-              disabled={actionPending}
+              disabled={actionPending || (action === "delete_user" && confirmText !== "DELETE")}
               onClick={() => {
                 setConfirmOpen(false);
                 void submitAction();

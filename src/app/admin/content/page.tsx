@@ -45,12 +45,35 @@ type Report = {
   };
 };
 
-type ModerationAction = "remove" | "restrict" | "shadow_ban" | "feature" | "promote";
+type ModerationAction = "remove" | "restrict" | "shadow_ban" | "feature" | "promote" | "delete_permanently";
+type DeleteImpactPreview = {
+  preview?: boolean;
+  reelDocExists?: boolean;
+  relatedMatched?: number;
+  relatedBreakdown?: Record<string, number>;
+  fileCandidates?: number;
+  error?: string;
+};
+
+type DeleteExecutionResult = {
+  ok?: boolean;
+  relatedDeleted?: number;
+  fileDeleteCount?: number;
+  verification?: {
+    cleanupComplete?: boolean;
+    reelDocExistsAfter?: boolean;
+    remainingRelated?: number;
+    remainingBreakdown?: Record<string, number>;
+    remainingStorageFiles?: number;
+  };
+  error?: string;
+};
 
 const ACTION_OPTIONS: { value: ModerationAction; label: string }[] = [
   { value: "restrict", label: "Send to Review" },
   { value: "remove", label: "Block" },
   { value: "shadow_ban", label: "Shadow Ban" },
+  { value: "delete_permanently", label: "Delete Permanently" },
   { value: "feature", label: "Mark Clear + Feature" },
   { value: "promote", label: "Mark Clear + Promote" },
 ];
@@ -58,15 +81,15 @@ const ACTION_OPTIONS: { value: ModerationAction; label: string }[] = [
 function allowedActionsByStatus(status: HiveStatus): ModerationAction[] {
   if (status === "clear" || status === "approved") {
     // Already safe in Hive; only show editorial or hard override actions.
-    return ["feature", "promote", "remove", "shadow_ban"];
+    return ["feature", "promote", "remove", "shadow_ban", "delete_permanently"];
   }
   if (status === "pending" || status === "review" || status === "skipped" || status === "error") {
-    return ["restrict", "feature", "promote", "remove", "shadow_ban"];
+    return ["restrict", "feature", "promote", "remove", "shadow_ban", "delete_permanently"];
   }
   if (status === "blocked") {
-    return ["feature", "promote", "remove"];
+    return ["feature", "promote", "remove", "delete_permanently"];
   }
-  return ["restrict", "feature", "promote", "remove", "shadow_ban"];
+  return ["restrict", "feature", "promote", "remove", "shadow_ban", "delete_permanently"];
 }
 
 const HIVE_STATUSES: Array<{ value: string; label: string }> = [
@@ -90,6 +113,10 @@ export default function ContentPage() {
   const [pendingId, setPendingId] = useState<string | null>(null);
   const [confirmOpen, setConfirmOpen] = useState(false);
   const [confirmTarget, setConfirmTarget] = useState<{ id: string; title: string; action: ModerationAction } | null>(null);
+  const [deletePreview, setDeletePreview] = useState<DeleteImpactPreview | null>(null);
+  const [deletePreviewLoading, setDeletePreviewLoading] = useState(false);
+  const [cleanupReport, setCleanupReport] = useState<DeleteExecutionResult["verification"] | null>(null);
+  const [cleanupSummary, setCleanupSummary] = useState<string | null>(null);
 
   async function loadReports() {
     setLoading(true);
@@ -117,18 +144,50 @@ export default function ContentPage() {
 
   async function applyAction(contentId: string, action: ModerationAction) {
     setPendingId(contentId);
+    if (action !== "delete_permanently") {
+      setCleanupReport(null);
+      setCleanupSummary(null);
+    }
     try {
       const res = await fetch(`/api/admin/content/${contentId}/actions`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ action, reason: "manual_review" }),
       });
-      if (!res.ok) throw new Error(`Action failed (${res.status})`);
+      const payload = (await res.json()) as DeleteExecutionResult;
+      if (!res.ok || payload.ok !== true) throw new Error(payload.error ?? `Action failed (${res.status})`);
+      if (action === "delete_permanently") {
+        setCleanupReport(payload.verification ?? null);
+        setCleanupSummary(
+          `Deleted ${payload.relatedDeleted ?? 0} related records and ${payload.fileDeleteCount ?? 0} storage files.`
+        );
+      }
       await loadReports();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to apply moderation action");
     } finally {
       setPendingId(null);
+    }
+  }
+
+  async function loadDeletePreview(contentId: string) {
+    setDeletePreviewLoading(true);
+    setDeletePreview(null);
+    try {
+      const res = await fetch(`/api/admin/content/${contentId}/actions`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "delete_permanently", reason: "manual_review", previewOnly: true }),
+      });
+      const payload = (await res.json()) as DeleteImpactPreview;
+      if (!res.ok) {
+        throw new Error(payload.error ?? `Failed to load delete impact (${res.status})`);
+      }
+      setDeletePreview(payload);
+    } catch (err) {
+      setDeletePreview({ error: err instanceof Error ? err.message : "Failed to load delete impact preview" });
+    } finally {
+      setDeletePreviewLoading(false);
     }
   }
 
@@ -158,6 +217,18 @@ export default function ContentPage() {
         .includes(q)
     );
   }, [sortedReports, search]);
+
+  const previewBreakdownEntries = useMemo(() => {
+    const raw = Object.entries(deletePreview?.relatedBreakdown ?? {});
+    return raw
+      .filter(([, count]) => Number(count) > 0)
+      .sort((a, b) => Number(b[1]) - Number(a[1]));
+  }, [deletePreview]);
+
+  const cleanupRemainingEntries = useMemo(() => {
+    const raw = Object.entries(cleanupReport?.remainingBreakdown ?? {});
+    return raw.filter(([, count]) => Number(count) > 0).sort((a, b) => Number(b[1]) - Number(a[1]));
+  }, [cleanupReport]);
 
   return (
     <section className="crm-page">
@@ -203,6 +274,30 @@ export default function ContentPage() {
       </div>
 
       {error ? <p className="rounded-md border border-amber-300 bg-amber-50 px-3 py-2 text-sm text-amber-800">{error}</p> : null}
+      {cleanupSummary ? (
+        <div className={`rounded-md border px-3 py-2 text-sm ${cleanupReport?.cleanupComplete ? "border-emerald-300 bg-emerald-50 text-emerald-800" : "border-amber-300 bg-amber-50 text-amber-800"}`}>
+          <p className="font-medium">{cleanupReport?.cleanupComplete ? "Cleanup complete" : "Cleanup completed with remaining data"}</p>
+          <p>{cleanupSummary}</p>
+          {cleanupReport ? (
+            <p className="mt-1 text-xs">
+              Reel exists after delete: {cleanupReport.reelDocExistsAfter ? "yes" : "no"} | Remaining related records: {cleanupReport.remainingRelated ?? 0} | Remaining storage files: {cleanupReport.remainingStorageFiles ?? 0}
+            </p>
+          ) : null}
+          {!cleanupReport?.cleanupComplete && cleanupRemainingEntries.length > 0 ? (
+            <div className="mt-2 max-h-32 overflow-auto rounded border bg-background/70 p-2">
+              <p className="mb-1 text-xs font-medium uppercase tracking-wide">Remaining by source</p>
+              <ul className="space-y-1 text-xs">
+                {cleanupRemainingEntries.map(([source, count]) => (
+                  <li key={source} className="flex items-center justify-between">
+                    <span className="font-mono">{source}</span>
+                    <span>{count}</span>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          ) : null}
+        </div>
+      ) : null}
 
       <div className="grid gap-4">
         {loading ? (
@@ -300,9 +395,15 @@ export default function ContentPage() {
                       variant="outline"
                       disabled={pendingId === r.id}
                       onClick={() => {
-                        if (opt.value === "remove" || opt.value === "shadow_ban") {
+                        if (opt.value === "remove" || opt.value === "shadow_ban" || opt.value === "delete_permanently") {
                           setConfirmTarget({ id: r.id, title: r.title, action: opt.value });
                           setConfirmOpen(true);
+                          if (opt.value === "delete_permanently") {
+                            void loadDeletePreview(r.id);
+                          } else {
+                            setDeletePreview(null);
+                            setDeletePreviewLoading(false);
+                          }
                           return;
                         }
                         void applyAction(r.id, opt.value);
@@ -324,17 +425,65 @@ export default function ContentPage() {
             <AlertDialogTitle>Confirm Hive moderation override</AlertDialogTitle>
             <AlertDialogDescription>
               You are about to <strong>{confirmTarget?.action ?? "apply action"}</strong> for <strong>{confirmTarget?.title ?? "selected reel"}</strong>.
-              This may hide content from feed immediately.
+              {confirmTarget?.action === "delete_permanently"
+                ? " This permanently deletes the reel, related comments/likes/reports, and linked storage files."
+                : " This may hide content from feed immediately."}
             </AlertDialogDescription>
           </AlertDialogHeader>
+          {confirmTarget?.action === "delete_permanently" ? (
+            <div className="rounded-md border bg-muted/30 p-3 text-sm">
+              <p className="font-medium text-foreground">Delete impact preview</p>
+              {deletePreviewLoading ? (
+                <p className="mt-1 text-muted-foreground">Calculating affected records... You can still confirm without waiting.</p>
+              ) : deletePreview?.error ? (
+                <p className="mt-1 text-red-600">{deletePreview.error}</p>
+              ) : (
+                <>
+                  <div className="mt-2 grid gap-2 sm:grid-cols-2">
+                    <p><span className="font-medium">Reel exists:</span> {deletePreview?.reelDocExists ? "Yes" : "No"}</p>
+                    <p><span className="font-medium">Storage files linked:</span> {deletePreview?.fileCandidates ?? 0}</p>
+                    <p><span className="font-medium">Total matched records:</span> {deletePreview?.relatedMatched ?? 0}</p>
+                    <p><span className="font-medium">Mode:</span> Preview only (no data deleted)</p>
+                  </div>
+                  <div className="mt-3 rounded-md border bg-background/80 p-2">
+                    <p className="mb-1 text-xs font-medium uppercase tracking-wide text-muted-foreground">Matched records by source</p>
+                    {previewBreakdownEntries.length === 0 ? (
+                      <p className="text-sm text-muted-foreground">No related records found.</p>
+                    ) : (
+                      <div className="max-h-40 overflow-auto">
+                        <ul className="space-y-1 text-sm">
+                          {previewBreakdownEntries.map(([source, count]) => (
+                            <li key={source} className="flex items-center justify-between rounded border bg-muted/30 px-2 py-1">
+                              <span className="font-mono text-xs">{source}</span>
+                              <span className="font-medium">{count}</span>
+                            </li>
+                          ))}
+                        </ul>
+                      </div>
+                    )}
+                  </div>
+                </>
+              )}
+            </div>
+          ) : null}
           <AlertDialogFooter>
-            <AlertDialogCancel disabled={pendingId !== null}>Cancel</AlertDialogCancel>
+            <AlertDialogCancel
+              disabled={pendingId !== null}
+              onClick={() => {
+                setDeletePreview(null);
+                setDeletePreviewLoading(false);
+              }}
+            >
+              Cancel
+            </AlertDialogCancel>
             <AlertDialogAction
               variant="destructive"
               disabled={!confirmTarget || pendingId !== null}
               onClick={() => {
                 if (!confirmTarget) return;
                 setConfirmOpen(false);
+                setDeletePreview(null);
+                setDeletePreviewLoading(false);
                 void applyAction(confirmTarget.id, confirmTarget.action);
               }}
             >
