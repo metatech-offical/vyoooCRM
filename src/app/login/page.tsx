@@ -35,11 +35,14 @@ export default function LoginPage() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ idToken }),
       });
-      if (!res.ok) throw new Error("login");
+      if (!res.ok) {
+        const payload = (await res.json().catch(() => ({}))) as { error?: string };
+        throw new Error(payload.error ?? "Login failed");
+      }
       router.push("/admin");
       router.refresh();
-    } catch {
-      setError("Login failed. Check credentials and admin role claim.");
+    } catch (error) {
+      setError(error instanceof Error ? error.message : "Login failed. Check credentials and admin role claim.");
     } finally {
       setPending(false);
     }
