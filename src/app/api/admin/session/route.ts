@@ -16,7 +16,11 @@ export async function POST(request: Request) {
     const sessionCookie = await adminAuth.createSessionCookie(idToken, { expiresIn: 1000 * 60 * 60 * 24 * 5 });
     (await cookies()).set({ name: SESSION_COOKIE_NAME, value: sessionCookie, httpOnly: true, secure: process.env.NODE_ENV === "production", sameSite: "lax", path: "/" });
 
-    await logAdminAction({ actorUid: decoded.uid, actorRole: role, action: "auth.session.created", targetType: "auth", targetId: decoded.uid });
+    try {
+      await logAdminAction({ actorUid: decoded.uid, actorRole: role, action: "auth.session.created", targetType: "auth", targetId: decoded.uid });
+    } catch {
+      // Do not block login if audit logging is temporarily unavailable.
+    }
     return NextResponse.json({ ok: true });
   } catch (error) {
     const message = error instanceof Error ? error.message : "Internal server error";
