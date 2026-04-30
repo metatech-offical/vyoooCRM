@@ -60,9 +60,10 @@ async function deleteStorageFiles(possibleUrls: unknown[]) {
 
 async function countExistingStorageFiles(objectPaths: string[]) {
   if (!adminStorage) return 0;
-  const checks = await mapWithConcurrency(objectPaths, QUERY_CONCURRENCY, async (objectPath) => {
+  const storage = adminStorage;
+  const checks = await mapWithConcurrency<string, number>(objectPaths, QUERY_CONCURRENCY, async (objectPath) => {
     try {
-      const [exists] = await adminStorage.bucket().file(objectPath).exists();
+      const [exists] = await storage.bucket().file(objectPath).exists();
       return exists ? 1 : 0;
     } catch {
       return 0;
