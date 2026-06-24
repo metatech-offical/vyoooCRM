@@ -1,7 +1,7 @@
 "use client";
 
-import Image from "next/image";
 import { useState } from "react";
+import { VyoooLogo } from "@/components/branding/vyooo-logo";
 import { useRouter } from "next/navigation";
 import { signInWithEmailAndPassword } from "firebase/auth";
 import { clientAuth, clientConfigError } from "@/lib/firebase/client";
@@ -52,14 +52,7 @@ export default function LoginPage() {
     <main className="mx-auto flex min-h-screen max-w-md items-center px-6">
       <Card className="w-full">
         <CardHeader>
-          <Image
-            src="/branding/vyooo-red-transparent.png"
-            alt="Vyooo"
-            width={180}
-            height={46}
-            className="mb-2 h-10 w-auto"
-            priority
-          />
+          <VyoooLogo variant="red" width={180} height={46} className="mb-2 h-10" priority />
           <CardTitle>Admin Login</CardTitle>
           <CardDescription>Sign in with Firebase admin account.</CardDescription>
         </CardHeader>

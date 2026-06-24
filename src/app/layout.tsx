@@ -7,6 +7,10 @@ const geist = Geist({ subsets: ["latin"] });
 export const metadata: Metadata = {
   title: "Vyooo Admin Dashboard",
   description: "Full platform control panel",
+  icons: {
+    icon: "/branding/vyooo-red-transparent.png",
+    apple: "/branding/vyooo-red-transparent.png",
+  },
 };
 
 export default function RootLayout({ children }: Readonly<{ children: React.ReactNode }>) {

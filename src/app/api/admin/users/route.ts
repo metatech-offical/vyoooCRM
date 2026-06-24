@@ -49,16 +49,21 @@ export async function GET(request: Request) {
 
     const users = docs.map((doc) => {
       const d = normalizeForJson(doc.data()) as Record<string, unknown>;
-      const status = d.disabled
+      const verificationStatus =
+        typeof d.verificationStatus === "string" ? d.verificationStatus.toLowerCase() : "";
+      const accountType = typeof d.accountType === "string" ? d.accountType.toLowerCase() : "";
+      const status = d.disabled || verificationStatus === "banned"
         ? "banned"
-        : d.suspended || d.status === "suspended"
+        : verificationStatus === "suspended" || d.suspended || d.status === "suspended"
           ? "suspended"
-          : d.status ?? "active";
+          : accountType === "restricted" || d.restricted
+            ? "restricted"
+            : d.status ?? "active";
 
       const reportsCount = Number(d.reportsCount ?? d.reportCount ?? 0);
       const followersCount = Number(d.followersCount ?? 0);
       const blockedUsersCount = Array.isArray(d.blockedUsers) ? d.blockedUsers.length : 0;
-      const restricted = Boolean(d.restricted ?? false);
+      const restricted = accountType === "restricted" || Boolean(d.restricted ?? false);
       const riskScore = Math.min(
         100,
         Math.round(reportsCount * 12 + blockedUsersCount * 6 + (restricted ? 20 : 0) + (followersCount < 5 ? 8 : 0))
@@ -86,7 +91,9 @@ export async function GET(request: Request) {
             : d.isVerified === true
               ? "verified"
               : "none",
+        accountType: typeof d.accountType === "string" ? d.accountType : undefined,
         isVerified: Boolean(d.isVerified ?? false),
+        restricted,
         reportsCount,
         riskScore,
         details: {

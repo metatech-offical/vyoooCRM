@@ -3,6 +3,7 @@ import { requireAdmin } from "@/lib/auth";
 import { adminAuth, adminDb } from "@/lib/firebase/admin";
 import { apiError } from "@/lib/http";
 import { logAdminAction } from "@/lib/audit";
+import { logModerationAction } from "@/lib/moderation";
 import { cascadeDeleteUserData } from "@/lib/user-deletion";
 
 export async function POST(request: Request, { params }: { params: Promise<{ uid: string }> }) {
@@ -25,10 +26,47 @@ export async function POST(request: Request, { params }: { params: Promise<{ uid
     let deletionSummary: Awaited<ReturnType<typeof cascadeDeleteUserData>> | null = null;
     if (action === "ban") {
       await adminAuth.updateUser(uid, { disabled: true });
-      await adminDb.collection("users").doc(uid).set({ status: "banned" }, { merge: true });
+      await adminDb.collection("users").doc(uid).set(
+        { verificationStatus: "banned", status: "banned", bannedAt: new Date().toISOString(), bannedBy: actor.uid },
+        { merge: true }
+      );
+      await logModerationAction({
+        actorUid: actor.uid,
+        actorRole: actor.role,
+        action: "user.ban",
+        targetType: "user",
+        targetId: uid,
+        payload: { reasonCode, notes },
+      });
     }
-    if (action === "suspend") await adminDb.collection("users").doc(uid).set({ status: "suspended" }, { merge: true });
-    if (action === "restrict") await adminDb.collection("users").doc(uid).set({ restricted: true }, { merge: true });
+    if (action === "suspend") {
+      await adminDb.collection("users").doc(uid).set(
+        { verificationStatus: "suspended", status: "suspended", suspendedAt: new Date().toISOString(), suspendedBy: actor.uid },
+        { merge: true }
+      );
+      await logModerationAction({
+        actorUid: actor.uid,
+        actorRole: actor.role,
+        action: "user.suspend",
+        targetType: "user",
+        targetId: uid,
+        payload: { reasonCode, notes },
+      });
+    }
+    if (action === "restrict") {
+      await adminDb.collection("users").doc(uid).set(
+        { accountType: "restricted", restrictedAt: new Date().toISOString(), restrictedBy: actor.uid },
+        { merge: true }
+      );
+      await logModerationAction({
+        actorUid: actor.uid,
+        actorRole: actor.role,
+        action: "user.restrict",
+        targetType: "user",
+        targetId: uid,
+        payload: { reasonCode, notes },
+      });
+    }
     if (action === "force_logout") await adminAuth.revokeRefreshTokens(uid);
     if (action === "verify_creator") await adminDb.collection("users").doc(uid).set({ creatorVerified: true }, { merge: true });
     if (action === "verify_user") {
