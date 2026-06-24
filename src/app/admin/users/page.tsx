@@ -86,6 +86,10 @@ export default function UsersPage() {
   const [confirmOpen, setConfirmOpen] = useState(false);
   const [confirmText, setConfirmText] = useState("");
 
+  const [reservedUsername, setReservedUsername] = useState("");
+  const [reservedNotes, setReservedNotes] = useState("");
+  const [reservedAssignPending, setReservedAssignPending] = useState(false);
+
   async function loadUsers(cursor?: string, append = false) {
     setLoading(true);
     try {
@@ -160,6 +164,37 @@ export default function UsersPage() {
     if (s === "rejected") return "destructive";
     if (s === "pending" || s === "submitted" || s === "in_review") return "secondary";
     return "outline";
+  }
+
+  async function assignReservedUsername() {
+    if (!selectedUser) return;
+    setReservedAssignPending(true);
+    try {
+      const res = await fetch("/api/admin/reserved-usernames/assign", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          uid: selectedUser.uid,
+          username: reservedUsername.trim(),
+          notes: reservedNotes.trim(),
+        }),
+      });
+      const data = (await res.json()) as { ok?: boolean; error?: string; username?: string; previousUsername?: string };
+      if (!res.ok || !data.ok) {
+        throw new Error(data.error ?? `Assignment failed (${res.status})`);
+      }
+      setHistory((h) => [
+        `Reserved username assigned: @${data.username} (was @${data.previousUsername ?? selectedUser.username ?? "unknown"})`,
+        ...h,
+      ]);
+      setReservedUsername("");
+      setReservedNotes("");
+      await loadUsers();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to assign reserved username");
+    } finally {
+      setReservedAssignPending(false);
+    }
   }
 
   async function submitAction() {
@@ -347,6 +382,45 @@ export default function UsersPage() {
               <p><span className="font-medium">Status:</span> {selectedUser.status}</p>
               <p><span className="font-medium">Risk Score:</span> {selectedUser.riskScore ?? 0}</p>
               <p><span className="font-medium">Reports:</span> {selectedUser.reportsCount}</p>
+            </div>
+
+            <div className="rounded-md border bg-muted/40 p-3 text-sm">
+              <p className="font-medium">Reserved username assignment</p>
+              <p className="text-muted-foreground">
+                If this user paid for a reserved handle, assign it here. Their current username is{" "}
+                <strong>@{selectedUser.username ?? "unknown"}</strong>.
+                {(selectedUser.username ?? "").startsWith("user_") ? (
+                  <span> This looks like a temporary username from signup.</span>
+                ) : null}
+              </p>
+              <div className="mt-3 grid gap-3 md:grid-cols-2">
+                <label className="space-y-1 text-sm">
+                  <span className="font-medium">Reserved username</span>
+                  <Input
+                    value={reservedUsername}
+                    onChange={(e) => setReservedUsername(e.target.value)}
+                    placeholder="e.g. nike"
+                  />
+                </label>
+                <label className="space-y-1 text-sm">
+                  <span className="font-medium">Internal notes</span>
+                  <Input
+                    value={reservedNotes}
+                    onChange={(e) => setReservedNotes(e.target.value)}
+                    placeholder="Payment ref, support ticket"
+                  />
+                </label>
+              </div>
+              <div className="mt-3">
+                <Button
+                  type="button"
+                  variant="secondary"
+                  disabled={reservedAssignPending || !reservedUsername.trim()}
+                  onClick={() => void assignReservedUsername()}
+                >
+                  {reservedAssignPending ? "Assigning..." : "Assign reserved username"}
+                </Button>
+              </div>
             </div>
 
             <div className="rounded-md border bg-muted/40 p-3 text-sm">

@@ -9,6 +9,7 @@ import { Separator } from "@/components/ui/separator";
 const nav = [
   { href: "/admin", label: "Analytics" },
   { href: "/admin/users", label: "Users" },
+  { href: "/admin/reserved-usernames", label: "Reserved Usernames" },
   { href: "/admin/moderation", label: "Moderation" },
   { href: "/admin/verifications", label: "Verifications" },
   { href: "/admin/cases", label: "Cases" },
