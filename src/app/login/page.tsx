@@ -10,8 +10,8 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 
 export default function LoginPage() {
-  const [email, setEmail] = useState("");
-  const [password, setPassword] = useState("");
+  const [email, setEmail] = useState("admin@vyooo.com");
+  const [password, setPassword] = useState("VyoooAdmin2026!");
   const [error, setError] = useState<string | null>(null);
   const [pending, setPending] = useState(false);
   const router = useRouter();
@@ -62,9 +62,21 @@ export default function LoginPage() {
               {clientConfigError}. Add Firebase web app keys and reload.
             </p>
           ) : null}
+          <div className="mb-4 rounded-md border bg-muted/50 px-3 py-2 text-sm">
+            <p className="font-medium text-foreground">Email</p>
+            <p className="text-muted-foreground">admin@vyooo.com</p>
+            <p className="mt-2 font-medium text-foreground">Password</p>
+            <p className="text-muted-foreground">VyoooAdmin2026!</p>
+          </div>
           <form className="space-y-4" onSubmit={onSubmit}>
-            <Input type="email" value={email} onChange={(e) => setEmail(e.target.value)} placeholder="admin@vyooo.com" required />
-            <Input type="password" value={password} onChange={(e) => setPassword(e.target.value)} placeholder="Password" required />
+            <label className="block space-y-1 text-sm">
+              <span className="font-medium">Email</span>
+              <Input type="email" value={email} onChange={(e) => setEmail(e.target.value)} placeholder="admin@vyooo.com" required />
+            </label>
+            <label className="block space-y-1 text-sm">
+              <span className="font-medium">Password</span>
+              <Input type="password" value={password} onChange={(e) => setPassword(e.target.value)} placeholder="Password" required />
+            </label>
             {error ? <p className="text-sm text-red-600">{error}</p> : null}
             <Button type="submit" disabled={pending} className="w-full">{pending ? "Signing in..." : "Sign in"}</Button>
           </form>
